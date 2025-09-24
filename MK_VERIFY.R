@@ -75,7 +75,7 @@ if (!("POWER"  %in% names(raw0))) stop("POWER 컬럼이 필요합니다.")
 has_rano <- "RANO_FR" %in% names(raw0)
 if (!has_rano) message("참고: RANO_FR 컬럼이 없어 DBF에는 NA로 기록됩니다.")
 
-# RAW 구성(요청 필드 보존: HA_22ND, RANO_FR)
+# RAW 구성(요청 필드 보존: HA_22ND, RANO_FR, DEL_INTR)
 RAW <- data.frame(
   RECCO   = raw0$RECCO,
   HA22_G  = raw0[[ha_col]],
@@ -84,6 +84,7 @@ RAW <- data.frame(
   POWER   = raw0$POWER,
   HA_22ND = if ("HA_22ND" %in% names(raw0)) raw0$HA_22ND else raw0[[ha_col]],
   RANO_FR = if (has_rano) raw0$RANO_FR else NA,
+  DEL_INTR = if ("DEL_INTR" %in% names(raw0)) raw0$DEL_INTR else 0,
   stringsAsFactors = FALSE
 )
 
@@ -91,13 +92,33 @@ RAW <- data.frame(
 RAW$REFER1 <- suppressWarnings(as.numeric(RAW$REFER1))
 RAW$HNO_FR <- suppressWarnings(as.numeric(RAW$HNO_FR))
 RAW$POWER  <- suppressWarnings(as.numeric(RAW$POWER))
+RAW$DEL_INTR <- suppressWarnings(as.numeric(RAW$DEL_INTR))
+RAW$DEL_INTR[is.na(RAW$DEL_INTR)] <- 0
 RAW <- RAW[is.finite(RAW$REFER1) & RAW$REFER1 >= 1 & is.finite(RAW$HNO_FR) & is.finite(RAW$POWER), ]
+
 ROWCOUNT_IN <- nrow(RAW)
 
-# -------------------- AA 레벨 대표값(X_R) --------------------
+# -------------------- AA 레벨 대표값(X_R) 및 r_x 계산 --------------------
 library(stats)
+
+# DEL_INTR != 0인 행을 필터링한 데이터로 r_x 계산 (mean 사용)
+RAW_filtered <- RAW[RAW$DEL_INTR != 0, ]
+if (nrow(RAW_filtered) == 0) {
+  # DEL_INTR != 0인 데이터가 없으면 전체 데이터 사용
+  RAW_filtered <- RAW
+}
+
+# r_x 계산 (mean 사용)
+r_x_tab <- aggregate(POWER ~ HA22_G + HNO_FR + REFER1, data = RAW_filtered, FUN = safe_mean)
+names(r_x_tab)[names(r_x_tab)=="POWER"] <- "r_x"
+
+# 기존 X_R 계산 유지 (호환성을 위해)
 X_R_tab <- aggregate(POWER ~ HA22_G + HNO_FR + REFER1, data = RAW, FUN = safe_mean)
 names(X_R_tab)[names(X_R_tab)=="POWER"] <- "X_R"
+
+# RAW 데이터에 r_x 추가
+RAW <- merge(RAW, r_x_tab[, c("HA22_G", "HNO_FR", "REFER1", "r_x")], 
+             by = c("HA22_G", "HNO_FR", "REFER1"), all.x = TRUE, sort = FALSE)
 
 aa_stats <- do.call(rbind, lapply(split(X_R_tab, list(X_R_tab$HA22_G, X_R_tab$HNO_FR), drop=TRUE), function(df){
   xr <- as.numeric(df$X_R)
@@ -111,6 +132,12 @@ aa_stats <- do.call(rbind, lapply(split(X_R_tab, list(X_R_tab$HA22_G, X_R_tab$HN
 row.names(aa_stats) <- NULL
 
 AA <- merge(X_R_tab, aa_stats, by=c("HA22_G","HNO_FR"), all.x=TRUE, sort=FALSE)
+
+# r_x 데이터를 AA에 병합하여 xr 필드 생성
+AA <- merge(AA, r_x_tab[, c("HA22_G", "HNO_FR", "REFER1", "r_x")], 
+            by = c("HA22_G", "HNO_FR", "REFER1"), all.x = TRUE, sort = FALSE)
+# xr 필드는 r_x를 직접 참조
+AA$xr <- AA$r_x
 gf <- mapply(function(x, med, madv, p80v){
   g <- gate_flag(x, med, madv, p80v, z_cut, eps)
   c(g$gate, g$z)
@@ -151,7 +178,7 @@ HR_RESULT <- C_TABLE
 
 # -------------------- 정렬 및 컬럼 정리 --------------------
 ord_AA <- AA[order(AA$HA22_G, AA$HNO_FR, AA$REFER1),
-             c("HA22_G","HNO_FR","REFER1","X_R","MEDIAN_AA","MAD_AA","Z_MAD","P80_AA","N_ROUND","GATE","POOR_LOCAL")]
+             c("HA22_G","HNO_FR","REFER1","X_R","xr","MEDIAN_AA","MAD_AA","Z_MAD","P80_AA","N_ROUND","GATE","POOR_LOCAL")]
 ord_CT <- C_TABLE[order(C_TABLE$HNO_FR, C_TABLE$REFER1),
                   c("HNO_FR","REFER1","X_C","MEDIAN","MAD","Z_MAD","P80","N_ROUND_HR","GATE","HR_DEL")]
 ord_CA <- CANDIDATE[order(CANDIDATE$HA22_G, CANDIDATE$HNO_FR, CANDIDATE$REFER1),
