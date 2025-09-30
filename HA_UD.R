@@ -3,7 +3,7 @@
 suppressWarnings({ options(stringsAsFactors = FALSE) })
 
 # ===================== CONFIG =====================
-BASE         <- "C:/HK"
+BASE         <- "C:/LEE"
 INDBF        <- file.path(BASE, "RA3_RANO1.DBF")        # 입/출력 DBF
 OUT_XLSX_DIR <- file.path(BASE, "OUT")
 OUT_XLSX     <- file.path(OUT_XLSX_DIR, "RA3_RANO1_OUT.xlsx")
